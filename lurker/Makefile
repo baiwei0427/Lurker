@@ -1,4 +1,5 @@
-obj-m += tcp_lurker.o
+obj-m += lurker.o
+lurker-y := flow_table.o main.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
