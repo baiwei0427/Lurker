@@ -8,6 +8,7 @@
 #include <linux/netfilter_ipv4.h>
 
 #include "flow_table.h"
+#include "net_func.h"
 
 /* param_dev: NIC to operate XPath */
 char *param_dev = NULL;
@@ -54,6 +55,8 @@ static unsigned int hook_func_out(const struct nf_hook_ops *ops,
                                  ntohs(f.key.local_port),
                                  &(f.key.remote_ip),
                                  ntohs(f.key.remote_port));
+                
+                parse_tcp_opt(tcph);
                 return NF_ACCEPT;
         }
 

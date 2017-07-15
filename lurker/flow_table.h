@@ -8,7 +8,7 @@
 
 struct flow_state {
         u16 mss;
-        u16 wscale;
+        u8 wscale;
         u16 cwnd;
         u16 srtt_us;
         u32 rcv_bytes_total;
