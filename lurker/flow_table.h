@@ -37,10 +37,15 @@ struct flow_table {
         spinlock_t lock;
 };
 
+inline void init_entry(struct flow_entry *entry, 
+                       u32 local_ip, 
+                       u32 remote_ip, 
+                       u16 local_port, 
+                       u16 remote_port);
 /* initialize a flow table with (1 << bits) linked lists */
 bool init_table(struct flow_table *table, u8 bits);
-/* insert a flow entry in the table and return true if it succeeds */
-bool insert_table(struct flow_table *table, struct flow_entry *flow);
+/* insert a flow entry in the table and return the entry allocated in the table */
+struct flow_entry *insert_table(struct flow_table *table, struct flow_entry *flow);
 /* search a flow entry in the table */
 struct flow_entry *search_table(struct flow_table *table, struct flow_entry *flow);
 /* delete a flow entry from the table and return true if it succeeds */

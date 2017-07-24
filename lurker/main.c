@@ -9,6 +9,7 @@
 
 #include "flow_table.h"
 #include "net_func.h"
+#include "params.h"
 
 /* param_dev: NIC to operate XPath */
 char *param_dev = NULL;
@@ -31,53 +32,78 @@ static unsigned int hook_func_out(const struct nf_hook_ops *ops,
         struct iphdr *iph = ip_hdr(skb);
         struct tcphdr *tcph = NULL;
         struct flow_entry f, *entry = NULL;
+        u16 rwnd;
 
         if (likely(out) && param_dev && strncmp(out->name, param_dev, IFNAMSIZ))
-                return NF_ACCEPT;
+                goto out;
 
         if (unlikely(!iph || iph->protocol != IPPROTO_TCP))
-                return NF_ACCEPT;
+                goto out;
 
         tcph = tcp_hdr(skb);
         if (param_port &&
             ntohs(tcph->source) != param_port &&
             ntohs(tcph->dest) != param_port)
-                return NF_ACCEPT;
+                goto out;
 
-        f.key.local_ip = iph->saddr;
-        f.key.remote_ip = iph->daddr;
-        f.key.local_port = tcph->source;
-        f.key.remote_port = tcph->dest;
+        init_entry(&f, iph->saddr, iph->daddr, tcph->source, tcph->dest);
 
-        if (tcph->syn && insert_table(&table, &f)) {
-                printk(KERN_INFO "Insert a flow entry (%pI4:%hu to %pI4:%hu)\n",
+        if (tcph->syn) {
+                if (unlikely(!(entry = insert_table(&table, &f))))
+                        goto out;
+
+                printk(KERN_INFO "Insert a entry (%pI4:%hu to %pI4:%hu)\n",
                                  &(f.key.local_ip),
                                  ntohs(f.key.local_port),
                                  &(f.key.remote_ip),
                                  ntohs(f.key.remote_port));
-                
-                parse_tcp_opt(tcph);
-                return NF_ACCEPT;
-        }
+                tcp_parse_opt(tcph, entry);
+                        
+                if (unlikely(entry->state.mss == 0)) {
+                        entry->state.mss = DEFAULT_MSS;
+                }
 
-        if ((tcph->fin || tcph->rst) && delete_table(&table, &f)) {
-                printk(KERN_INFO "Delete a flow entry (%pI4:%hu to %pI4:%hu)\n",
+                if (unlikely(entry->state.wscale == 0)) {
+                        entry->state.wscale = DEFAULT_WSCALE;
+                }
+
+                //printk(KERN_INFO "MSS: %hu WScale: %d\n", entry->state.mss, entry->state.wscale);
+                rwnd = wnd_to_bytes(INIT_CWND, entry->state.mss, entry->state.wscale);
+                goto modify;                                               
+
+        } else if (tcph->fin || tcph->rst) {
+                if (delete_table(&table, &f)) {
+                        printk(KERN_INFO "Delete a entry (%pI4:%hu to %pI4:%hu)\n",
+                                         &(f.key.local_ip),
+                                         ntohs(f.key.local_port),
+                                         &(f.key.remote_ip),
+                                         ntohs(f.key.remote_port));
+                }
+
+                goto out;
+
+        } else if (!(entry = search_table(&table, &f))) {
+                printk(KERN_INFO "No entry (%pI4:%hu to %pI4:%hu)\n",
                                  &(f.key.local_ip),
                                  ntohs(f.key.local_port),
                                  &(f.key.remote_ip),
                                  ntohs(f.key.remote_port));
-                return NF_ACCEPT;
+                goto out;
+
+        } else {
+                rwnd = wnd_to_bytes(INIT_CWND, entry->state.mss, entry->state.wscale);
+                goto modify;                
         }
 
-        if (!(entry = search_table(&table, &f))) {
-                printk(KERN_INFO "No flow entry (%pI4:%hu to %pI4:%hu)\n",
-                                 &(f.key.local_ip),
-                                 ntohs(f.key.local_port),
-                                 &(f.key.remote_ip),
-                                 ntohs(f.key.remote_port));
-                return NF_ACCEPT;
-        }
+/* modify the rwnd of packet and send it out */
+modify:
+        if (ntohs(tcph->window) > rwnd)
+                tcp_modify_rwnd(skb, rwnd);
 
+        return NF_ACCEPT;
+
+/* send the packet out without any modification */
+out:
         return NF_ACCEPT;
 }
 

@@ -1,6 +1,27 @@
 #include "flow_table.h"
 #include "crc_table.h"
 
+
+inline void init_entry(struct flow_entry *entry, 
+                       u32 local_ip, 
+                       u32 remote_ip, 
+                       u16 local_port, 
+                       u16 remote_port)
+{
+        entry->key.local_ip = local_ip;
+        entry->key.remote_ip = remote_ip;
+        entry->key.local_port = local_port;
+        entry->key.remote_port = remote_port;
+        entry->state.mss = 0;
+        entry->state.wscale = 0;
+        entry->state.cwnd = 0;
+        entry->state.srtt_us = 0;
+        entry->state.rcv_bytes_total = 0;
+        entry->state.rcv_bytes_ecn = 0;
+        entry->state.dctcp_alpha = 0;
+        entry->state.last_wnd_update = ktime_set(0, 0);
+}
+
 /* Lookup table based solution */
 static inline u16 crc16(u8 *data, unsigned int len)
 {
@@ -84,7 +105,7 @@ void free_table(struct flow_table *table)
         vfree(table->lists);
 }
 
-bool insert_table(struct flow_table *table, struct flow_entry *flow)
+struct flow_entry *insert_table(struct flow_table *table, struct flow_entry *flow)
 {
         u16 index = flow_hash(flow) >> (16 - table->bits);
         struct flow_entry *obj = NULL;
@@ -92,20 +113,20 @@ bool insert_table(struct flow_table *table, struct flow_entry *flow)
         unsigned long flags;
 
         if (unlikely(!table || !flow || !(table->lists)))
-                return false;
+                goto out;
 
         spin_lock_irqsave(&(table->lock), flags);
         hlist_for_each_entry_safe(obj, tmp, &(table->lists[index]), hlist) {
                 if (same_flow(obj, flow)) {
                         printk(KERN_INFO "The flow entry already exists\n");
                         spin_unlock_irqrestore(&(table->lock), flags);
-                        return false;
+                        goto out;
                 }
         }
         spin_unlock_irqrestore(&(table->lock), flags);
 
         if (unlikely(!(obj = kmalloc(sizeof(struct flow_entry), GFP_ATOMIC))))
-                return false;
+                goto out;
 
         *obj = *flow;
         INIT_HLIST_NODE(&(obj->hlist));
@@ -114,7 +135,8 @@ bool insert_table(struct flow_table *table, struct flow_entry *flow)
         spin_unlock_irqrestore(&(table->lock), flags);
         atomic_inc(&(table->num_flows));
 
-        return true;
+out:
+        return obj;
 }
 
 struct flow_entry *search_table(struct flow_table *table, struct flow_entry *flow)
